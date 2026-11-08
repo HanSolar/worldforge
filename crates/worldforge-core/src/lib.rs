@@ -73,6 +73,8 @@ pub fn config_from_params(json: &str) -> Result<WorldConfig> {
         #[serde(default)]
         pixel_scale: Option<i32>,
         #[serde(default)]
+        preview_thumbnail_256: Option<bool>,
+        #[serde(default)]
         coast_glow: Option<bool>,
         #[serde(default)]
         palette: Option<String>,
@@ -116,6 +118,9 @@ pub fn config_from_params(json: &str) -> Result<WorldConfig> {
     if let Some(v) = parsed.pixel_scale {
         config.pixel_scale = v;
     }
+    if let Some(v) = parsed.preview_thumbnail_256 {
+        config.preview_thumbnail_256 = v;
+    }
     if let Some(v) = parsed.coast_glow {
         config.coast_glow = v;
     }
@@ -135,6 +140,7 @@ pub fn render_image(config: WorldConfig, width: u32, height: u32, channels: u32)
         canvas_height: height,
         coast_glow: config.coast_glow,
         pixel_scale: config.pixel_scale,
+        preview_thumbnail_256: config.preview_thumbnail_256,
     };
 
     let mut buffer = vec![0.0f32; band.sample_count()];
@@ -182,5 +188,13 @@ mod tests {
         assert_eq!(config.continent_variation, 80);
         assert_eq!(config.continent_drift, 20);
         assert_eq!(config.island_variation, 5);
+    }
+
+    #[test]
+    fn preview_thumbnail_flag_parses() {
+        let off = config_from_params(r#"{"preview_thumbnail_256":false}"#).unwrap();
+        let on = config_from_params(r#"{"preview_thumbnail_256":true}"#).unwrap();
+        assert!(!off.preview_thumbnail_256);
+        assert!(on.preview_thumbnail_256);
     }
 }

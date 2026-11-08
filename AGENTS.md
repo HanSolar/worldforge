@@ -49,6 +49,14 @@ https://github.com/storytold/photocraft/blob/main/docs/plugins.md
 - Respect instruction / memory budgets; prefer cheap per-pixel work.
 - Do not panic across the wasm boundary.
 
+## Instruction budget gate (hard)
+
+Any edit that can affect `worldforge-photocraft` runtime cost (core sampling, coastline/glow, palette, raster, manifest params, ABI glue) must include an instruction-budget check before marking work done.
+
+- Run the wasm host/integration tests and confirm no instruction-budget failures in a fresh build.
+- Keep expensive neighborhood/coast work behind explicit gates and defaults that stay budget-safe.
+- If a change risks budget overruns, reduce per-pixel work first; do not ship and "hope host limits are fine."
+
 ## Determinism (hard)
 
 Same generator version + config + seed + dimensions ⇒ same samples.
@@ -87,6 +95,7 @@ Do not copy Street Fighter or other commercial map art, layouts, or assets.
 5. Do not force-push `main`, rewrite published history, or skip hooks unless the human explicitly asks.
 6. Do not mark wasm install “done” without a real build artifact and tests when the task required them.
 7. Do not invent host imports or custom PhotoCraft panels (not in ABI v1).
+8. Do not mark plugin-affecting work "done" until instruction-budget checks pass.
 
 ## Agent model choice
 
@@ -129,3 +138,4 @@ Wasm artifact: `target/wasm32-unknown-unknown/release/worldforge_photocraft.wasm
 - Wasm module has **no imports** and exports the ABI surface.
 - Seeded output is deterministic; banded rendering matches whole-image rendering.
 - Invalid inputs fail with error codes, not traps.
+- Plugin/integration tests show no instruction-budget overrun for default settings.

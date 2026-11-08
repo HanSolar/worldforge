@@ -14,6 +14,7 @@ fn options(canvas: u32) -> RenderOptions {
         canvas_height: canvas,
         coast_glow: true,
         pixel_scale: 2,
+        preview_thumbnail_256: false,
     }
 }
 
@@ -242,6 +243,7 @@ fn pixel_scale_produces_blocky_output() {
         canvas_height: size,
         coast_glow: false,
         pixel_scale: 4,
+        preview_thumbnail_256: false,
     };
 
     let mut buf = vec![0.0f32; (size * size * 3) as usize];
@@ -300,6 +302,7 @@ fn non_square_canvas_is_letterboxed_not_stretched() {
         canvas_height: 100,
         coast_glow: true,
         pixel_scale: 1,
+        preview_thumbnail_256: false,
     };
 
     let mut buf = vec![0.0f32; (200 * 100 * 3) as usize];

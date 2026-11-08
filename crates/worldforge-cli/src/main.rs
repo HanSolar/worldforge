@@ -77,6 +77,7 @@ OPTIONS:
         --roughness <N>            0..100, coastline irregularity
         --coverage <N>             5..90, approximate land share in percent
         --scale <N>                1..8, pixel-art block size
+        --preview-256              Draft mode: cap effective sampling near 256px
         --no-glow                  Disable the bright coastline treatment
         --size <N>                 Preview size in pixels (default 512)
         --png <PATH>               Write a PNG preview
@@ -94,6 +95,7 @@ struct Options {
     islands: Option<i32>,
     coverage: Option<i32>,
     scale: Option<i32>,
+    preview_256: bool,
     no_glow: bool,
     size: Option<u32>,
     png: Option<String>,
@@ -110,6 +112,7 @@ impl Options {
             match arg.as_str() {
                 "-h" | "--help" => options.help = true,
                 "--manifest" => options.manifest = true,
+                "--preview-256" => options.preview_256 = true,
                 "--no-glow" => options.no_glow = true,
                 "--seed" => options.seed = Some(value(&mut args, arg)?.parse().map_err(bad(arg))?),
                 "--continent-variation" => {
@@ -184,6 +187,9 @@ impl Options {
         }
         if let Some(v) = self.scale {
             config.pixel_scale = v;
+        }
+        if self.preview_256 {
+            config.preview_thumbnail_256 = true;
         }
         if self.no_glow {
             config.coast_glow = false;

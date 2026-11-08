@@ -86,12 +86,22 @@ pub struct RenderOptions {
     pub coast_glow: bool,
     /// Document pixels per world texel.
     pub pixel_scale: i32,
+    /// Draft-preview mode: approximate a 256x256 thumbnail for fast interaction.
+    pub preview_thumbnail_256: bool,
 }
 
 impl RenderOptions {
     /// Pixels per world texel, at least 1.
     pub fn scale(&self) -> u32 {
-        self.pixel_scale.max(1) as u32
+        let base = self.pixel_scale.max(1) as u32;
+        if !self.preview_thumbnail_256 {
+            return base;
+        }
+
+        // Keep draft work near a 256x256 budget even on very large canvases.
+        let max_side = self.canvas_width.max(self.canvas_height).max(1);
+        let draft = max_side.div_ceil(256);
+        base.max(draft.max(1))
     }
 }
 
@@ -243,6 +253,7 @@ fn shade(field: &Field, palette: &Palette, u: f32, v: f32, options: &RenderOptio
     let height = field.sample(su, sv);
     let threshold = field.threshold();
 
+    let coast_effects = options.coast_glow && !options.preview_thumbnail_256;
     match surface {
         Surface::Ocean => {
             // Shallow-to-deep gradient away from the shelf. The exponent keeps
@@ -253,8 +264,10 @@ fn shade(field: &Field, palette: &Palette, u: f32, v: f32, options: &RenderOptio
 
             // Glow only matters near shore. Skipping deep ocean avoids the
             // costly ring search on most pixels.
-            if options.coast_glow && depth < 0.22 {
-                if let Some(d) = coastline::shore_distance(field, su, sv, 3) {
+            // Tight gate: shoreline glow is the costliest per-pixel branch and
+            // must stay inside PhotoCraft instruction budgets on large bands.
+            if coast_effects && depth < 0.16 {
+                if let Some(d) = coastline::shore_distance(field, su, sv, 2) {
                     let falloff = (1.0 - d / 6.0).clamp(0.0, 1.0).powf(2.0);
                     colour = colour.lerp(palette.coast_glow, falloff * 0.55);
                 }
@@ -270,7 +283,7 @@ fn shade(field: &Field, palette: &Palette, u: f32, v: f32, options: &RenderOptio
                 .lerp(palette.land_highlight, above.powf(0.85));
 
             // Coast checks are expensive; deep interior land cannot be coast.
-            if options.coast_glow && above < 0.28 && coastline::is_coast(field, su, sv) {
+            if coast_effects && above < 0.20 && coastline::is_coast(field, su, sv) {
                 colour = palette.coastline;
             }
             colour
@@ -290,6 +303,7 @@ mod tests {
             canvas_height: canvas,
             coast_glow: true,
             pixel_scale: 2,
+            preview_thumbnail_256: false,
         };
         (field, options)
     }
@@ -406,6 +420,7 @@ mod tests {
             canvas_height: 32,
             coast_glow: false,
             pixel_scale: 2,
+            preview_thumbnail_256: false,
         };
         let band = Band::new(0, 0, 32, 32, 1);
         let mut buffer = vec![0.0f32; band.sample_count()];

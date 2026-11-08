@@ -18,6 +18,8 @@ alwaysApply: true
 - ABI exports: `pc_abi_version`, `pc_manifest`, `pc_alloc`, `pc_filter`, plus `memory`.
 - Render by global document coordinates; bands must stitch seamlessly.
 - Prefer instruction-cheap per-pixel paths; keep coast glow / neighborhood work gated.
+- Any plugin-cost-affecting edit must run instruction-budget checks before completion.
+- Do not mark plugin work done unless host/plugin tests show no instruction-budget overrun at default settings.
 
 ## Determinism
 

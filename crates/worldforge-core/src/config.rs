@@ -94,6 +94,8 @@ pub struct WorldConfig {
     pub land_coverage: i32,
     /// Pixel-art sampling scale, in document pixels per world texel.
     pub pixel_scale: i32,
+    /// Draft mode: clamp effective sampling to ~256px across for fast preview.
+    pub preview_thumbnail_256: bool,
     /// Bright coastline treatment.
     pub coast_glow: bool,
     /// Palette id.
@@ -111,6 +113,7 @@ impl Default for WorldConfig {
             coast_roughness: COAST_ROUGHNESS.default,
             land_coverage: LAND_COVERAGE.default,
             pixel_scale: PIXEL_SCALE.default,
+            preview_thumbnail_256: false,
             coast_glow: true,
             palette: PaletteId::ArcadeBlueGold,
         }

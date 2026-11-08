@@ -119,6 +119,7 @@ pub const MANIFEST: &str = r#"{
     "coast_roughness":     {"type": "int", "min": 0,  "max": 100,        "default": 45},
     "land_coverage":       {"type": "int", "min": 5,  "max": 90,         "default": 38},
     "pixel_scale":         {"type": "int", "min": 1,  "max": 8,          "default": 2, "unit": "px"},
+    "preview_thumbnail_256":{"type": "bool", "default": false},
     "coast_glow":          {"type": "bool", "default": true},
     "palette":             {"type": "choice", "options": ["arcade_blue_gold"], "default": "arcade_blue_gold"}
   },
@@ -211,6 +212,8 @@ mod tests {
     #[test]
     fn bool_and_choice_params_match_spec_defaults() {
         let v = json();
+        assert_eq!(v["params"]["preview_thumbnail_256"]["type"], "bool");
+        assert_eq!(v["params"]["preview_thumbnail_256"]["default"], false);
         assert_eq!(v["params"]["coast_glow"]["type"], "bool");
         assert_eq!(v["params"]["coast_glow"]["default"], true);
         assert_eq!(v["params"]["palette"]["type"], "choice");
