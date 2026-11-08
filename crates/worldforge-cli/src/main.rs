@@ -1,22 +1,18 @@
 //! `worldforge` — headless map generation.
 //!
-//! Spec §3.1: "The CLI is not required to ship Milestone 1. It is reserved for
-//! future headless generation and export workflows." It exists here because it
-//! is by far the fastest way to check a seed without PhotoCraft in the loop, and
-//! because the fixtures in `docs/` are generated with it.
+//! Spec §3.1: "The CLI is not required to ship Milestone 1." It exists here as
+//! the fastest way to check a seed without PhotoCraft in the loop.
 //!
 //! ```text
 //! worldforge --seed 123456 --size 512
 //! worldforge --manifest
-//! worldforge --seed 42 --coverage 60 --png out/world.png
+//! worldforge --seed 42 --continent-drift 90 --png out/world.png
 //! ```
 
 use std::process::ExitCode;
 
 use worldforge_core::{WorldConfig, land_fraction, render_image};
 
-/// Raw RGBA8 → PNG, so the CLI can produce an image without pulling the png
-/// crate into the plug-in's dependency graph.
 mod png_writer;
 
 fn main() -> ExitCode {
@@ -72,21 +68,27 @@ USAGE:
     worldforge [OPTIONS]
 
 OPTIONS:
-        --seed <N>          Reproduce a map (default 123456)
-        --variation <N>     0..100, deviation from the Earth-like layout
-        --roughness <N>     0..100, coastline irregularity
-        --islands <N>       0..100, small-island frequency
-        --coverage <N>      5..90, approximate land share in percent
-        --scale <N>         1..8, pixel-art block size
-        --no-glow           Disable the bright coastline treatment
-        --size <N>          Preview size in pixels (default 512)
-        --png <PATH>        Write a PNG preview
-        --manifest          Print the PhotoCraft plug-in manifest
-    -h, --help              Show this help";
+        --seed <N>                 Reproduce a map (default 123456)
+        --continent-variation <N>  0..100, continent silhouette reshape
+        --continent-drift <N>      0..100, how far continents move from anchors
+        --island-variation <N>     0..100, island shape/placement randomness
+        --islands <N>              0..100, small-island frequency
+        --variation <N>            Legacy: maps into continent + island knobs
+        --roughness <N>            0..100, coastline irregularity
+        --coverage <N>             5..90, approximate land share in percent
+        --scale <N>                1..8, pixel-art block size
+        --no-glow                  Disable the bright coastline treatment
+        --size <N>                 Preview size in pixels (default 512)
+        --png <PATH>               Write a PNG preview
+        --manifest                 Print the PhotoCraft plug-in manifest
+    -h, --help                     Show this help";
 
 #[derive(Debug, Default)]
 struct Options {
     seed: Option<u64>,
+    continent_variation: Option<i32>,
+    continent_drift: Option<i32>,
+    island_variation: Option<i32>,
     variation: Option<i32>,
     roughness: Option<i32>,
     islands: Option<i32>,
@@ -110,6 +112,18 @@ impl Options {
                 "--manifest" => options.manifest = true,
                 "--no-glow" => options.no_glow = true,
                 "--seed" => options.seed = Some(value(&mut args, arg)?.parse().map_err(bad(arg))?),
+                "--continent-variation" => {
+                    options.continent_variation =
+                        Some(value(&mut args, arg)?.parse().map_err(bad(arg))?)
+                }
+                "--continent-drift" => {
+                    options.continent_drift =
+                        Some(value(&mut args, arg)?.parse().map_err(bad(arg))?)
+                }
+                "--island-variation" => {
+                    options.island_variation =
+                        Some(value(&mut args, arg)?.parse().map_err(bad(arg))?)
+                }
                 "--variation" => {
                     options.variation = Some(value(&mut args, arg)?.parse().map_err(bad(arg))?)
                 }
@@ -140,8 +154,24 @@ impl Options {
         if let Some(seed) = self.seed {
             config.seed = seed;
         }
-        if let Some(v) = self.variation {
-            config.variation = v;
+
+        let has_split = self.continent_variation.is_some()
+            || self.continent_drift.is_some()
+            || self.island_variation.is_some();
+        if !has_split {
+            if let Some(v) = self.variation {
+                config = config.apply_legacy_variation(v);
+            }
+        }
+
+        if let Some(v) = self.continent_variation {
+            config.continent_variation = v;
+        }
+        if let Some(v) = self.continent_drift {
+            config.continent_drift = v;
+        }
+        if let Some(v) = self.island_variation {
+            config.island_variation = v;
         }
         if let Some(v) = self.roughness {
             config.coast_roughness = v;
@@ -159,8 +189,6 @@ impl Options {
             config.coast_glow = false;
         }
 
-        // Clamp rather than reject: a typo in a flag should still render
-        // something, matching how the host treats out-of-range params.
         Ok(config.clamped())
     }
 }

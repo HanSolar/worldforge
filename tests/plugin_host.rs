@@ -195,7 +195,8 @@ struct BandSpec {
 impl BandSpec {
     fn params(self, canvas_w: u32, canvas_h: u32) -> String {
         format!(
-            r#"{{"seed":123456,"variation":35,"coast_roughness":45,"island_density":30,
+            r#"{{"seed":123456,"continent_variation":55,"continent_drift":65,
+                "island_variation":40,"island_density":30,"coast_roughness":45,
                 "land_coverage":38,"pixel_scale":2,"coast_glow":true,"palette":"arcade_blue_gold",
                 "_image":{{"x":{},"y":{},"width":{},"height":{},"overlap":0,
                           "canvasWidth":{canvas_w},"canvasHeight":{canvas_h},

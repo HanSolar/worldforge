@@ -49,6 +49,84 @@ fn different_seeds_produce_different_pixels() {
 }
 
 #[test]
+fn different_seeds_change_coarse_land_masks() {
+    // User-facing requirement: continents should not stay glued to the same
+    // anchors when only the seed changes.
+    let mask = |seed: u64| -> Vec<bool> {
+        let field = Field::new(WorldConfig {
+            seed,
+            ..WorldConfig::default()
+        });
+        let mut cells = Vec::with_capacity(64);
+        for y in 0..8 {
+            for x in 0..8 {
+                let u = (x as f32 + 0.5) / 8.0;
+                let v = (y as f32 + 0.5) / 8.0;
+                cells.push(field.is_land(u, v));
+            }
+        }
+        cells
+    };
+
+    let flips = mask(11)
+        .into_iter()
+        .zip(mask(99))
+        .filter(|(a, b)| a != b)
+        .count();
+    assert!(
+        flips >= 8,
+        "expected coarse land mask flips across seeds, got {flips}"
+    );
+}
+
+#[test]
+fn continent_knobs_reshape_more_than_island_knobs() {
+    let base = WorldConfig {
+        seed: 42,
+        island_density: 0,
+        ..WorldConfig::default()
+    };
+    let continent = WorldConfig {
+        continent_variation: 100,
+        continent_drift: 100,
+        ..base
+    };
+    let islands = WorldConfig {
+        island_density: 100,
+        island_variation: 100,
+        ..base
+    };
+
+    let score = |a: WorldConfig, b: WorldConfig| -> f32 {
+        let fa = Field::new(a);
+        let fb = Field::new(b);
+        let mut sum = 0.0;
+        for y in 0..32 {
+            for x in 0..32 {
+                let u = (x as f32 + 0.5) / 32.0;
+                let v = (y as f32 + 0.5) / 32.0;
+                sum += (fa.sample(u, v) - fb.sample(u, v)).abs();
+            }
+        }
+        sum
+    };
+
+    let continent_delta = score(base, continent);
+    let island_delta = score(base, islands);
+    assert!(
+        continent_delta > island_delta * 1.15,
+        "continent controls should dominate island controls: {continent_delta} vs {island_delta}"
+    );
+}
+
+#[test]
+fn legacy_variation_params_still_parse() {
+    let config = config_from_params(r#"{"seed":9,"variation":60}"#).expect("legacy params");
+    assert_eq!(config.continent_variation, 60);
+    assert_eq!(config.continent_drift, 60);
+}
+
+#[test]
 fn splitting_a_render_into_bands_changes_nothing() {
     // The acceptance criterion for spec Task 2. Simulates the host's banding by
     // rendering a full image, then the same image as independent strips

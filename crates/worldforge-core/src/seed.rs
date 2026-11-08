@@ -7,7 +7,7 @@
 /// Generator version recorded alongside exported data (spec §3.3).
 ///
 /// Increment whenever an algorithm change alters output for a given seed.
-pub const GENERATOR_VERSION: u32 = 1;
+pub const GENERATOR_VERSION: u32 = 2;
 
 /// SplitMix64 finaliser. The single mixing primitive in the engine.
 #[inline]

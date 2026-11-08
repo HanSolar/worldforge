@@ -6,31 +6,25 @@
 //!   WebAssembly instance. No state survives between calls.
 //! - A full-canvas buffer inside a band is forbidden.
 //!
-//! So there is no `Landmass` image type here. There is a [`Field`] that answers
-//! "is this world coordinate land?" for one point at a time — or fills a
-//! rectangle — and its answer depends only on the config and the coordinate.
+//! Continent macro-layout and island generation use **separate seed streams**
+//! and separate config knobs so changing the seed (or continent controls) can
+//! move large landmasses without islands dragging continents around.
 
 use crate::config::WorldConfig;
-use crate::noise::{self, fbm, fbm_signed};
+use crate::noise::{fbm, fbm_signed, value_noise};
+use crate::seed::SplitMix64;
 
 /// Continental-bias layout: where the generator wants large landmasses.
 ///
 /// This is a low-resolution hand-authored control field, not noise. Spec §4.2:
 /// "the initial Earth-like profile should use a designed continental-bias mask
-/// or control field. Pure unconstrained noise is unlikely to produce
-/// recognisable Earth-like continent placement reliably."
-///
-/// Row-major, `BIAS_W x BIAS_H`, values `0.0..=1.0` where 1 is strong land bias.
-/// The shape is a stylised, non-representational arrangement of large
-/// landmasses chosen to read as an arcade world-selection screen: a broad
-/// western continent, a broad eastern continent, a southern landmass, and an
-/// open ocean corridor between the western and eastern masses.
+/// or control field." Seed-driven transform + macro noise move that layout so
+/// different seeds are not stuck on the same anchors.
 const BIAS_W: usize = 16;
 const BIAS_H: usize = 9;
 
 #[rustfmt::skip]
 const CONTINENT_BIAS: [f32; BIAS_W * BIAS_H] = [
-    //  west ocean   ..   western continent   ..  mid ocean  ..  eastern continent  .. east ocean
     0.00, 0.00, 0.05, 0.10, 0.20, 0.45, 0.60, 0.55, 0.25, 0.10, 0.30, 0.65, 0.80, 0.70, 0.35, 0.05,
     0.00, 0.05, 0.15, 0.35, 0.65, 0.85, 0.90, 0.75, 0.30, 0.15, 0.55, 0.90, 0.95, 0.80, 0.45, 0.10,
     0.05, 0.20, 0.45, 0.70, 0.90, 0.95, 0.90, 0.65, 0.25, 0.20, 0.60, 0.95, 0.95, 0.85, 0.55, 0.15,
@@ -43,8 +37,6 @@ const CONTINENT_BIAS: [f32; BIAS_W * BIAS_H] = [
 ];
 
 /// Bilinear sample of the continental bias at normalised `(u, v)`.
-///
-/// `u`/`v` are in `0.0..=1.0`; east-west wraps so the map has no seam.
 fn continental_bias(u: f32, v: f32) -> f32 {
     let x = u.rem_euclid(1.0) * (BIAS_W as f32 - 1.0);
     let y = v.clamp(0.0, 1.0) * (BIAS_H as f32 - 1.0);
@@ -63,112 +55,167 @@ fn continental_bias(u: f32, v: f32) -> f32 {
     top + (bottom - top) * fy
 }
 
-/// Latitude falloff: pulls the far poles towards ocean so continents do not run
-/// off the top and bottom edges.
 fn latitude_falloff(v: f32) -> f32 {
-    // 1.0 through the middle, easing to ~0.55 at the poles.
     let t = ((v - 0.5) * 2.0).abs();
     let eased = t * t * t;
     1.0 - 0.45 * eased
 }
 
+/// Seed-derived transform applied to bias coordinates.
+#[derive(Debug, Clone, Copy)]
+struct ContinentTransform {
+    /// East-west wrap offset in normalised units.
+    shift_u: f32,
+    /// North-south offset (clamped after apply).
+    shift_v: f32,
+    /// Small rotation in radians around the map centre.
+    rotation: f32,
+    /// How strongly the seed macro field replaces the hand bias.
+    macro_mix: f32,
+}
+
+impl ContinentTransform {
+    fn from_seed(seed: u64, drift: f32, variation: f32) -> Self {
+        let mut rng = SplitMix64::new(seed);
+        // Drift controls placement; variation controls reshape mix.
+        let drift = drift.clamp(0.0, 1.0);
+        let variation = variation.clamp(0.0, 1.0);
+        Self {
+            shift_u: (rng.next_f32() - 0.5) * 2.0 * (0.08 + drift * 0.55),
+            shift_v: (rng.next_f32() - 0.5) * 2.0 * (0.04 + drift * 0.28),
+            rotation: (rng.next_f32() - 0.5) * 2.0 * (0.08 + drift * 0.55),
+            macro_mix: 0.18 + variation * 0.62,
+        }
+    }
+
+    fn map(&self, u: f32, v: f32) -> (f32, f32) {
+        // Rotate around the centre, then translate. East-west wraps; latitude
+        // stays in 0..=1 so poles do not fold.
+        let cu = u - 0.5;
+        let cv = v - 0.5;
+        let (s, c) = self.rotation.sin_cos();
+        let ru = cu * c - cv * s;
+        let rv = cu * s + cv * c;
+        let ou = (ru + 0.5 + self.shift_u).rem_euclid(1.0);
+        let ov = (rv + 0.5 + self.shift_v).clamp(0.0, 1.0);
+        (ou, ov)
+    }
+}
+
 /// A world field bound to one configuration.
-///
-/// Cheap to construct (no tables, no allocation) and `Copy`, so each band can
-/// build one at no cost.
 #[derive(Debug, Clone, Copy)]
 pub struct Field {
     config: WorldConfig,
     seed_warp: u32,
     seed_detail: u32,
+    seed_macro: u32,
     seed_island: u32,
+    seed_island_warp: u32,
     seed_coast: u32,
+    transform: ContinentTransform,
     threshold: f32,
 }
 
 impl Field {
     /// Prepares the field for `config`.
-    ///
-    /// All per-call setup happens here, once — never per pixel.
     pub fn new(config: WorldConfig) -> Self {
         let seed = config.seed();
+        let transform = ContinentTransform::from_seed(
+            // Dedicated stream so island knobs cannot move continents.
+            crate::seed::mix64(seed.value() ^ u64::from(seed.stream("continent_layout"))),
+            config.continent_drift_weight(),
+            config.continent_variation_weight(),
+        );
         Self {
             config,
-            // Separate streams per stage (spec §3.3), so tuning the coast noise
-            // cannot shift the continents.
-            seed_warp: seed.stream("warp"),
-            seed_detail: seed.stream("detail"),
+            seed_warp: seed.stream("continent_warp"),
+            seed_detail: seed.stream("continent_detail"),
+            seed_macro: seed.stream("continent_macro"),
             seed_island: seed.stream("island"),
+            seed_island_warp: seed.stream("island_warp"),
             seed_coast: seed.stream("coast"),
+            transform,
             threshold: config.land_threshold(),
         }
     }
 
-    /// The configuration this field was built from.
     pub fn config(&self) -> WorldConfig {
         self.config
     }
 
-    /// The land threshold in use.
     pub fn threshold(&self) -> f32 {
         self.threshold
     }
 
     /// Raw world field at normalised coordinates, in `0.0..=1.0`.
-    ///
-    /// This is the pre-threshold scalar field described in spec §4.2:
-    /// continental bias, warped by low-frequency noise, plus coastline detail
-    /// and an island component.
     pub fn sample(&self, u: f32, v: f32) -> f32 {
-        let variation = self.config.variation_weight();
+        let continent_var = self.config.continent_variation_weight();
         let roughness = self.config.roughness_weight();
         let islands = self.config.island_weight();
+        let island_var = self.config.island_variation_weight();
 
-        // 1-2. Domain warp: nudge the coordinates so continents are organic
-        // rather than the control field's literal shape. `variation` sets how
-        // far a seed may wander from the designed layout.
-        let warp_amount = 0.02 + variation * 0.14;
-        let wx = fbm_signed(self.seed_warp, u * 2.3, v * 2.3) * warp_amount;
-        let wy = fbm_signed(self.seed_warp, u * 2.3 + 5.2, v * 2.3 - 3.1) * warp_amount;
-        let su = (u + wx).rem_euclid(1.0);
-        let sv = (v + wy).clamp(0.0, 1.0);
+        // --- Continents (own streams + transform) ---------------------------
+        let (bu, bv) = self.transform.map(u, v);
 
-        // 3. Continental bias, plus latitude shaping.
+        // Fine warp on the already-drifted layout so silhouettes are organic.
+        let warp_amount = 0.015 + continent_var * 0.12;
+        let wx = fbm_signed(self.seed_warp, bu * 2.1, bv * 2.1) * warp_amount;
+        let wy = fbm_signed(self.seed_warp, bu * 2.1 + 5.2, bv * 2.1 - 3.1) * warp_amount;
+        let su = (bu + wx).rem_euclid(1.0);
+        let sv = (bv + wy).clamp(0.0, 1.0);
+
         let bias = continental_bias(su, sv) * latitude_falloff(v);
 
-        // 4. Large-scale noise, blended in proportionally to `variation`.
-        let broad = fbm(self.seed_detail, su * 1.7, sv * 1.7);
-        let mut height = bias * (1.0 - variation * 0.55) + broad * (variation * 0.55);
+        // Low-frequency macro field — this is what makes seed changes relocate
+        // major masses instead of only fraying coasts.
+        let macro_field = fbm(self.seed_macro, su * 1.15 + 2.7, sv * 1.15 - 1.4);
+        let mix = self.transform.macro_mix;
+        let mut height = bias * (1.0 - mix) + macro_field * mix;
 
-        // 5. Coastline detail: fine noise, strongest near the threshold band so
-        // it breaks up shores without shredding continent interiors.
+        // Mid-scale continent detail.
+        let broad = fbm(self.seed_detail, su * 1.9, sv * 1.9);
+        height = height * (1.0 - continent_var * 0.35) + broad * (continent_var * 0.35);
+
+        // Coastline detail (shared look, but does not move continents).
         if roughness > 0.0 {
-            let fine = noise::value_noise(self.seed_coast, su * 26.0, sv * 26.0) - 0.5;
+            let fine = value_noise(self.seed_coast, su * 26.0, sv * 26.0) - 0.5;
             let mid = fbm(self.seed_detail, su * 7.0 + 11.0, sv * 7.0) - 0.5;
             height += fine * roughness * 0.15 + mid * roughness * 0.06;
         }
 
-        // 6. Islands: sparse high-frequency specks, only where the bias is low
-        // (open ocean), so they read as islands rather than land texture.
-        if islands > 0.0 && bias < 0.45 {
-            let speck = noise::value_noise(self.seed_island, su * 48.0, sv * 48.0);
-            let gate = (1.0 - bias / 0.45).clamp(0.0, 1.0);
-            let ridge = (speck - 0.72).max(0.0) * 3.57; // 0 above 0.72, up to 1
-            height += ridge * gate * islands * 0.42;
+        // --- Islands (independent streams + knobs) --------------------------
+        // Sampled in original (u,v) with their own warp so island clusters do
+        // not inherit continent drift.
+        if islands > 0.0 {
+            let i_warp = 0.01 + island_var * 0.08;
+            let iwx = fbm_signed(self.seed_island_warp, u * 3.1, v * 3.1) * i_warp;
+            let iwy = fbm_signed(self.seed_island_warp, u * 3.1 + 8.0, v * 3.1) * i_warp;
+            let iu = (u + iwx).rem_euclid(1.0);
+            let iv = (v + iwy).clamp(0.0, 1.0);
+
+            // Prefer open ocean relative to the *continent* field so islands
+            // appear offshore rather than as continent texture.
+            let open = (1.0 - bias / 0.48).clamp(0.0, 1.0);
+            if open > 0.0 {
+                let freq = 36.0 + island_var * 28.0;
+                let speck = value_noise(self.seed_island, iu * freq, iv * freq);
+                // Higher island_variation lowers the ridge threshold → more
+                // shape diversity; density scales amplitude/gating.
+                let ridge_cut = 0.78 - island_var * 0.12;
+                let ridge = (speck - ridge_cut).max(0.0) / (1.0 - ridge_cut).max(1e-3);
+                let cluster = fbm(self.seed_island, iu * 4.5 + 3.0, iv * 4.5);
+                let gate = open * (0.35 + cluster * 0.65);
+                height += ridge * gate * islands * (0.28 + island_var * 0.22);
+            }
         }
 
         height.clamp(0.0, 1.0)
     }
 
-    /// Whether normalised `(u, v)` is land.
     pub fn is_land(&self, u: f32, v: f32) -> bool {
         self.sample(u, v) > self.threshold
     }
 
-    /// World coordinate for a document pixel, in normalised units.
-    ///
-    /// Aspect ratio is preserved (spec §4.3): the world is fitted inside the
-    /// canvas and letterboxed, never stretched to arbitrary proportions.
     #[inline]
     pub fn world_coord(&self, x: u32, y: u32, width: u32, height: u32) -> (f32, f32) {
         let (fit_w, fit_h, off_x, off_y) = self.fit(width, height);
@@ -177,10 +224,6 @@ impl Field {
         (u, v)
     }
 
-    /// Letterbox rectangle: `(fit_w, fit_h, off_x, off_y)` in pixels.
-    ///
-    /// A square world is fitted inside the document, centred, using the
-    /// smaller dimension.
     pub fn fit(&self, width: u32, height: u32) -> (f32, f32, f32, f32) {
         let w = width.max(1) as f32;
         let h = height.max(1) as f32;
@@ -188,8 +231,6 @@ impl Field {
         (side, side, (w - side) * 0.5, (h - side) * 0.5)
     }
 
-    /// Whether a document pixel falls inside the fitted world rather than the
-    /// letterbox margin.
     pub fn in_world(&self, x: u32, y: u32, width: u32, height: u32) -> bool {
         let (fit_w, _, off_x, off_y) = self.fit(width, height);
         let fx = x as f32 + 0.5 - off_x;
@@ -233,11 +274,117 @@ mod tests {
     }
 
     #[test]
+    fn seeds_move_macro_land_masses() {
+        // Coarse 8x8 land masks for two seeds should disagree in several cells.
+        // This is the user-facing bug: continents stayed glued to the same spots.
+        let mask = |seed: u64| -> [bool; 64] {
+            let field = Field::new(WorldConfig {
+                seed,
+                ..WorldConfig::default()
+            });
+            let mut out = [false; 64];
+            for y in 0..8 {
+                for x in 0..8 {
+                    let u = (x as f32 + 0.5) / 8.0;
+                    let v = (y as f32 + 0.5) / 8.0;
+                    out[y * 8 + x] = field.is_land(u, v);
+                }
+            }
+            out
+        };
+
+        let a = mask(11);
+        let b = mask(99);
+        let flips = a.iter().zip(b.iter()).filter(|(x, y)| x != y).count();
+        assert!(
+            flips >= 8,
+            "expected macro land mask to move across seeds, flips={flips}"
+        );
+    }
+
+    #[test]
+    fn continent_controls_change_silhouette_more_than_island_controls() {
+        let base = WorldConfig {
+            seed: 42,
+            island_density: 0,
+            ..WorldConfig::default()
+        };
+        let continent = WorldConfig {
+            continent_variation: 100,
+            continent_drift: 100,
+            island_density: 0,
+            ..base
+        };
+        let islands_only = WorldConfig {
+            continent_variation: base.continent_variation,
+            continent_drift: base.continent_drift,
+            island_density: 100,
+            island_variation: 100,
+            ..base
+        };
+
+        let diff = |a: WorldConfig, b: WorldConfig| -> f32 {
+            let fa = Field::new(a);
+            let fb = Field::new(b);
+            let mut sum = 0.0f32;
+            for y in 0..32 {
+                for x in 0..32 {
+                    let u = (x as f32 + 0.5) / 32.0;
+                    let v = (y as f32 + 0.5) / 32.0;
+                    sum += (fa.sample(u, v) - fb.sample(u, v)).abs();
+                }
+            }
+            sum
+        };
+
+        let continent_delta = diff(base, continent);
+        let island_delta = diff(base, islands_only);
+        assert!(
+            continent_delta > island_delta * 1.15,
+            "continent knobs should reshape more than island knobs: {continent_delta} vs {island_delta}"
+        );
+    }
+
+    #[test]
+    fn island_density_adds_offshore_land_without_identical_continents() {
+        let none = WorldConfig {
+            seed: 7,
+            island_density: 0,
+            island_variation: 0,
+            ..WorldConfig::default()
+        };
+        let many = WorldConfig {
+            island_density: 100,
+            island_variation: 80,
+            ..none
+        };
+        let fa = Field::new(none);
+        let fb = Field::new(many);
+
+        let mut gained = 0;
+        for y in 0..48 {
+            for x in 0..48 {
+                let u = (x as f32 + 0.5) / 48.0;
+                let v = (y as f32 + 0.5) / 48.0;
+                if !fa.is_land(u, v) && fb.is_land(u, v) {
+                    gained += 1;
+                }
+            }
+        }
+        assert!(
+            gained > 5,
+            "expected new island land cells, gained={gained}"
+        );
+    }
+
+    #[test]
     fn samples_stay_in_unit_range() {
         let field = Field::new(WorldConfig {
-            variation: 100,
-            coast_roughness: 100,
+            continent_variation: 100,
+            continent_drift: 100,
+            island_variation: 100,
             island_density: 100,
+            coast_roughness: 100,
             ..WorldConfig::default()
         });
         for y in 0..64 {
@@ -252,12 +399,10 @@ mod tests {
 
     #[test]
     fn coordinate_is_a_pure_function_of_global_position() {
-        // The band-boundary guarantee (spec Task 2 acceptance).
         let field = Field::new(WorldConfig::default());
         let (w, h) = (512u32, 512u32);
         for (x, y) in [(0, 0), (17, 33), (255, 256), (511, 511)] {
             let direct = field.world_coord(x, y, w, h);
-            // Recomputing from a different vantage point must agree exactly.
             let again = field.world_coord(x, y, w, h);
             assert_eq!(direct, again);
             assert_eq!(
@@ -275,8 +420,6 @@ mod tests {
         assert_eq!(fit_h, 400.0);
         assert_eq!(off_x, 300.0);
         assert_eq!(off_y, 0.0);
-
-        // Corners of the wider canvas are letterbox margin.
         assert!(!field.in_world(0, 200, 1000, 400));
         assert!(field.in_world(500, 200, 1000, 400));
     }

@@ -1,7 +1,8 @@
 //! The generator's parameter set and its validation.
 //!
-//! Spec §4.4: the dialog exposes a small set of controls, not every internal
-//! algorithm constant. These mirror the manifest one-for-one.
+//! Continent and island controls are intentionally separate so seed / continent
+//! knobs can reshape large landmasses without the island controls dragging
+//! continents around (and vice versa).
 
 use serde::{Deserialize, Serialize};
 
@@ -24,20 +25,30 @@ pub const SEED: Bounds = Bounds {
     max: i32::MAX,
     default: 123_456,
 };
-pub const VARIATION: Bounds = Bounds {
+pub const CONTINENT_VARIATION: Bounds = Bounds {
     min: 0,
     max: 100,
-    default: 35,
+    default: 55,
 };
-pub const COAST_ROUGHNESS: Bounds = Bounds {
+pub const CONTINENT_DRIFT: Bounds = Bounds {
     min: 0,
     max: 100,
-    default: 45,
+    default: 65,
+};
+pub const ISLAND_VARIATION: Bounds = Bounds {
+    min: 0,
+    max: 100,
+    default: 40,
 };
 pub const ISLAND_DENSITY: Bounds = Bounds {
     min: 0,
     max: 100,
     default: 30,
+};
+pub const COAST_ROUGHNESS: Bounds = Bounds {
+    min: 0,
+    max: 100,
+    default: 45,
 };
 pub const LAND_COVERAGE: Bounds = Bounds {
     min: 5,
@@ -50,10 +61,17 @@ pub const PIXEL_SCALE: Bounds = Bounds {
     default: 2,
 };
 
-/// Largest side the generator will accept, in document pixels.
+/// Legacy single knob used by older manifests / CLI flags.
 ///
-/// Banded execution caps how much work one call does, but a pathological
-/// document still has to stay finite for `f32` coordinate math to stay exact.
+/// When present without the new continent/island fields, it is mapped into
+/// `continent_variation`, `continent_drift`, and `island_variation`.
+pub const LEGACY_VARIATION: Bounds = Bounds {
+    min: 0,
+    max: 100,
+    default: 35,
+};
+
+/// Largest side the generator will accept, in document pixels.
 pub const MAX_DIMENSION: u32 = 32_768;
 
 /// Everything needed to reproduce a map.
@@ -62,12 +80,16 @@ pub const MAX_DIMENSION: u32 = 32_768;
 pub struct WorldConfig {
     /// Reproduces a map.
     pub seed: u64,
-    /// Procedural deviation from the Earth-like layout, 0..=100.
-    pub variation: i32,
-    /// Coastline irregularity, 0..=100.
-    pub coast_roughness: i32,
+    /// How strongly seed-driven noise reshapes continent silhouettes, 0..=100.
+    pub continent_variation: i32,
+    /// How far major continents may drift from the Earth-like bias anchors, 0..=100.
+    pub continent_drift: i32,
+    /// Seeded irregularity of island placement/shape, independent of continents.
+    pub island_variation: i32,
     /// Frequency of small islands, 0..=100.
     pub island_density: i32,
+    /// Coastline irregularity, 0..=100.
+    pub coast_roughness: i32,
     /// Approximate land share, in percent.
     pub land_coverage: i32,
     /// Pixel-art sampling scale, in document pixels per world texel.
@@ -82,9 +104,11 @@ impl Default for WorldConfig {
     fn default() -> Self {
         Self {
             seed: SEED.default as u64,
-            variation: VARIATION.default,
-            coast_roughness: COAST_ROUGHNESS.default,
+            continent_variation: CONTINENT_VARIATION.default,
+            continent_drift: CONTINENT_DRIFT.default,
+            island_variation: ISLAND_VARIATION.default,
             island_density: ISLAND_DENSITY.default,
+            coast_roughness: COAST_ROUGHNESS.default,
             land_coverage: LAND_COVERAGE.default,
             pixel_scale: PIXEL_SCALE.default,
             coast_glow: true,
@@ -99,15 +123,25 @@ impl WorldConfig {
         Seed::new(self.seed)
     }
 
+    /// Applies the legacy single `variation` knob when the new split fields are
+    /// not being set explicitly by a caller.
+    pub fn apply_legacy_variation(mut self, variation: i32) -> Self {
+        let v = clamp_bounds(variation, LEGACY_VARIATION);
+        self.continent_variation = v;
+        self.continent_drift = v;
+        // Islands get a quieter share of the old knob so legacy maps do not
+        // suddenly fill with islands when only `variation` was set.
+        self.island_variation = (v * 2 / 3).clamp(ISLAND_VARIATION.min, ISLAND_VARIATION.max);
+        self
+    }
+
     /// Clamps every field into range.
-    ///
-    /// Clamping rather than rejecting is deliberate for numeric controls: the
-    /// host already clamps, and a slightly out-of-range value should produce a
-    /// usable map rather than an error dialog.
     pub fn clamped(mut self) -> Self {
-        self.variation = clamp_bounds(self.variation, VARIATION);
-        self.coast_roughness = clamp_bounds(self.coast_roughness, COAST_ROUGHNESS);
+        self.continent_variation = clamp_bounds(self.continent_variation, CONTINENT_VARIATION);
+        self.continent_drift = clamp_bounds(self.continent_drift, CONTINENT_DRIFT);
+        self.island_variation = clamp_bounds(self.island_variation, ISLAND_VARIATION);
         self.island_density = clamp_bounds(self.island_density, ISLAND_DENSITY);
+        self.coast_roughness = clamp_bounds(self.coast_roughness, COAST_ROUGHNESS);
         self.land_coverage = clamp_bounds(self.land_coverage, LAND_COVERAGE);
         self.pixel_scale = clamp_bounds(self.pixel_scale, PIXEL_SCALE);
         self
@@ -115,28 +149,39 @@ impl WorldConfig {
 
     /// Rejects configurations the generator cannot honour.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        check(self.variation, VARIATION, "variation")?;
-        check(self.coast_roughness, COAST_ROUGHNESS, "coast_roughness")?;
+        check(
+            self.continent_variation,
+            CONTINENT_VARIATION,
+            "continent_variation",
+        )?;
+        check(self.continent_drift, CONTINENT_DRIFT, "continent_drift")?;
+        check(self.island_variation, ISLAND_VARIATION, "island_variation")?;
         check(self.island_density, ISLAND_DENSITY, "island_density")?;
+        check(self.coast_roughness, COAST_ROUGHNESS, "coast_roughness")?;
         check(self.land_coverage, LAND_COVERAGE, "land_coverage")?;
         check(self.pixel_scale, PIXEL_SCALE, "pixel_scale")?;
         Ok(())
     }
 
     /// Land threshold used by the classifier, derived from `land_coverage`.
-    ///
-    /// A higher requested coverage lowers the threshold, so more of the field
-    /// counts as land.
     pub fn land_threshold(&self) -> f32 {
-        // Calibrated so 0 % -> 0.70 and 100 % -> 0.30; the field's own
-        // distribution is roughly centred on 0.5.
         let t = self.land_coverage as f32 / 100.0;
         (0.70 - t * 0.40).clamp(0.0, 1.0)
     }
 
-    /// Variation as a `0.0..=1.0` weight for the continental bias override.
-    pub fn variation_weight(&self) -> f32 {
-        self.variation as f32 / 100.0
+    /// Continent silhouette variation as `0.0..=1.0`.
+    pub fn continent_variation_weight(&self) -> f32 {
+        self.continent_variation as f32 / 100.0
+    }
+
+    /// Continent placement drift as `0.0..=1.0`.
+    pub fn continent_drift_weight(&self) -> f32 {
+        self.continent_drift as f32 / 100.0
+    }
+
+    /// Island shape/placement variation as `0.0..=1.0`.
+    pub fn island_variation_weight(&self) -> f32 {
+        self.island_variation as f32 / 100.0
     }
 
     /// Roughness as a `0.0..=1.0` weight for coastline detail.
@@ -240,13 +285,17 @@ mod tests {
     #[test]
     fn clamping_always_produces_a_valid_config() {
         let config = config_with(|c| {
-            c.variation = -50;
+            c.continent_variation = -50;
+            c.continent_drift = 9_999;
+            c.island_variation = -1;
             c.island_density = 9_999;
             c.pixel_scale = 0;
         });
         let fixed = config.clamped();
         assert!(fixed.validate().is_ok());
-        assert_eq!(fixed.variation, VARIATION.min);
+        assert_eq!(fixed.continent_variation, CONTINENT_VARIATION.min);
+        assert_eq!(fixed.continent_drift, CONTINENT_DRIFT.max);
+        assert_eq!(fixed.island_variation, ISLAND_VARIATION.min);
         assert_eq!(fixed.island_density, ISLAND_DENSITY.max);
         assert_eq!(fixed.pixel_scale, PIXEL_SCALE.min);
     }
@@ -256,6 +305,14 @@ mod tests {
         let low = config_with(|c| c.land_coverage = 10);
         let high = config_with(|c| c.land_coverage = 80);
         assert!(low.land_threshold() > high.land_threshold());
+    }
+
+    #[test]
+    fn legacy_variation_maps_into_split_controls() {
+        let mapped = WorldConfig::default().apply_legacy_variation(80);
+        assert_eq!(mapped.continent_variation, 80);
+        assert_eq!(mapped.continent_drift, 80);
+        assert_eq!(mapped.island_variation, 53);
     }
 
     #[test]

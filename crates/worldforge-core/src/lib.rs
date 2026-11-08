@@ -47,8 +47,10 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 /// Parses the host's parameter JSON into a [`WorldConfig`].
 ///
 /// Unknown keys are ignored rather than rejected: the host appends `_image` and
-/// may add fields in future ABI revisions, and a generator should not break on
-/// a superset of what it understands. Out-of-range numbers are clamped.
+/// may add fields in future ABI revisions. Out-of-range numbers are clamped.
+///
+/// Legacy `variation` is honoured when the new continent/island knobs are
+/// absent, so older PhotoCraft dialog saves keep working.
 pub fn config_from_params(json: &str) -> Result<WorldConfig> {
     #[derive(serde::Deserialize)]
     struct Params {
@@ -56,6 +58,12 @@ pub fn config_from_params(json: &str) -> Result<WorldConfig> {
         seed: Option<u64>,
         #[serde(default)]
         variation: Option<i32>,
+        #[serde(default)]
+        continent_variation: Option<i32>,
+        #[serde(default)]
+        continent_drift: Option<i32>,
+        #[serde(default)]
+        island_variation: Option<i32>,
         #[serde(default)]
         coast_roughness: Option<i32>,
         #[serde(default)]
@@ -76,8 +84,25 @@ pub fn config_from_params(json: &str) -> Result<WorldConfig> {
     if let Some(seed) = parsed.seed {
         config.seed = seed;
     }
-    if let Some(v) = parsed.variation {
-        config.variation = v;
+
+    let has_split = parsed.continent_variation.is_some()
+        || parsed.continent_drift.is_some()
+        || parsed.island_variation.is_some();
+
+    if !has_split {
+        if let Some(v) = parsed.variation {
+            config = config.apply_legacy_variation(v);
+        }
+    }
+
+    if let Some(v) = parsed.continent_variation {
+        config.continent_variation = v;
+    }
+    if let Some(v) = parsed.continent_drift {
+        config.continent_drift = v;
+    }
+    if let Some(v) = parsed.island_variation {
+        config.island_variation = v;
     }
     if let Some(v) = parsed.coast_roughness {
         config.coast_roughness = v;
@@ -118,8 +143,6 @@ pub fn render_image(config: WorldConfig, width: u32, height: u32, channels: u32)
 }
 
 /// Fraction of the world that is land, by sampling the field.
-///
-/// Not used for rendering; it exists for tests and for the CLI to report.
 pub fn land_fraction(config: WorldConfig, samples_per_axis: u32) -> f32 {
     let field = Field::new(config);
     let n = samples_per_axis.max(1);
@@ -136,4 +159,28 @@ pub fn land_fraction(config: WorldConfig, samples_per_axis: u32) -> f32 {
     }
 
     land as f32 / (n * n) as f32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_variation_param_maps_when_split_absent() {
+        let config = config_from_params(r#"{"seed":1,"variation":70}"#).unwrap();
+        assert_eq!(config.continent_variation, 70);
+        assert_eq!(config.continent_drift, 70);
+        assert_eq!(config.island_variation, 46);
+    }
+
+    #[test]
+    fn explicit_split_params_win_over_legacy_variation() {
+        let config = config_from_params(
+            r#"{"seed":1,"variation":10,"continent_variation":80,"continent_drift":20,"island_variation":5}"#,
+        )
+        .unwrap();
+        assert_eq!(config.continent_variation, 80);
+        assert_eq!(config.continent_drift, 20);
+        assert_eq!(config.island_variation, 5);
+    }
 }
