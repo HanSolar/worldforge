@@ -1,0 +1,18 @@
+---
+description: Never burn High-token Cursor models on easy work (git, chores, small patches).
+alwaysApply: true
+---
+
+# Cheap models for easy work
+
+**Do not use High-token / High-effort Cursor models for easy work.**
+
+Forbidden for Easy tasks: Opus, `*-high-thinking`, Max Mode, Hard-tier slugs, Medium-tier when a one-file or chore would do, and `inherit` from an expensive parent.
+
+Allowed for Easy tasks only: `composer-2.5-fast`, `gpt-5-mini`, `gemini-3.8-flash-high`, `claude-4.5-haiku-thinking`.
+
+Easy includes: git status/diff/log/branch/commit/push/PR, comments, renames, one-function edits, UI copy, short doc/spec tweaks, marking todos done, Cargo.toml version bumps.
+
+Use Medium/Hard only for real feature work or deep bugs (landmass macro fields, PhotoCraft wasm ABI, instruction-budget tuning, seam/determinism failures). See `AGENTS.md` § Agent model choice.
+
+New agent tabs start on Auto. Do not leave a new tab on Grok, Opus, high-thinking, or Max for chores.

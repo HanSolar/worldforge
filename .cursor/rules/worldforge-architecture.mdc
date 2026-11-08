@@ -1,0 +1,28 @@
+---
+description: WorldForge architecture boundaries — shared core, host adapters, PhotoCraft wasm ABI.
+alwaysApply: true
+---
+
+# WorldForge architecture (hard)
+
+## Boundaries
+
+- Geography algorithms live only in `crates/worldforge-core`.
+- Host adapters (`worldforge-photocraft`, CLI) stay thin.
+- Do not import Chess Studio, Tauri, React, Medusa, or chess rules into this repo.
+- Chess Studio may consume WorldForge **exports later**; WorldForge never owns campaigns.
+
+## PhotoCraft adapter
+
+- Target: `wasm32-unknown-unknown` with **zero imports**.
+- ABI exports: `pc_abi_version`, `pc_manifest`, `pc_alloc`, `pc_filter`, plus `memory`.
+- Render by global document coordinates; bands must stitch seamlessly.
+- Prefer instruction-cheap per-pixel paths; keep coast glow / neighborhood work gated.
+
+## Determinism
+
+- Separate `Seed::stream` names per generation stage.
+- Bump `GENERATOR_VERSION` when seed meaning changes.
+- Same inputs ⇒ same `f32` samples.
+
+See root `AGENTS.md` for commands and forbidden list.

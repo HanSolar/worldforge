@@ -1,0 +1,19 @@
+[package]
+name = "worldforge-photocraft"
+description = "WorldForge PhotoCraft plug-in: WebAssembly ABI v1 adapter over worldforge-core."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+name = "worldforge_photocraft"
+# cdylib is the WebAssembly module; rlib keeps the ABI unit-testable natively.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+worldforge-core.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

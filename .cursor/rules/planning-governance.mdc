@@ -1,0 +1,38 @@
+---
+description: Planning governance — validate constraints before implementation; keep plan structure; gate Planning→Validation→Approval→Implementation.
+alwaysApply: true
+---
+
+# Planning governance (hard)
+
+Adapted from Chess Studio / Chess Latte store governance for WorldForge.
+
+**Do not replace** the existing plan header structure (Project, Repository, Branch, Base branch, Date, Plan scope). Governance sits *under* that structure.
+
+**Required heading order (after metadata):** **Agent usage (difficulty)** (full per-todo table) → **Constraints** → **Requirements** → **Milestones this plan achieves** → body.
+
+## Fundamental
+
+Technically possible ≠ technically validated. Inspect real code and PhotoCraft ABI constraints before locking architecture.
+
+## Workflow gate
+
+**Planning → Validation → Approval → Implementation.**  
+Do not implement unresolved critical constraints. Do not treat finishing core as automatic readiness for the PhotoCraft adapter without ABI checks.
+
+## When creating or updating a plan
+
+0. **Branch first (hard)** — create a dedicated plan/feature branch and name it at the top of the plan before implementation edits. Do not land plan work directly on `main` unless the human explicitly orders that.
+0b. **Pre-design tip check** — `git fetch origin` when a remote exists; compare checkout vs `origin/main`; **stop** if a newer same-topic tip already has the work.
+1. **Existing-state inspection** — read owning crates; mark Verified vs Assumption.
+2. **Dependencies / interfaces** — core vs photocraft vs CLI; never reverse the dependency direction.
+3. **Host constraints** — wasm no-imports, banded fresh instances, instruction budget, `f32` in-place samples.
+4. **Determinism** — seed streams, generator version, no wall clock.
+5. **Scope / impact** — no Chess Studio / commerce / campaign expansions in M1-style work.
+6. **Evidence** — tests that prove determinism, band seams, and (when claimed) macro seed variation.
+
+## Three hard rules
+
+1. No assumption-based architecture against the PhotoCraft ABI.
+2. No unresolved critical host constraints marked implementation-ready.
+3. No cascading implementation that couples WorldForge core to Chess Studio or PhotoCraft UI panels.

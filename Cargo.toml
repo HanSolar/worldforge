@@ -1,0 +1,72 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/worldforge-core",
+    "crates/worldforge-photocraft",
+    "crates/worldforge-cli",
+]
+
+# The root package ships nothing (spec §3.1: the CLI is not required for M1).
+# It exists only so the workspace-level `tests/` and `examples/` folders are real
+# Cargo targets, rather than silently ignored as they would be in a virtual
+# manifest with no `[package]`.
+[package]
+name = "worldforge-workspace"
+description = "Workspace-level tests and preview harnesses for WorldForge."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+authors = ["JC Kirsten"]
+publish = false
+
+autobins = false
+autolib = false
+autoexamples = false
+
+[[test]]
+name = "pipeline"
+path = "tests/pipeline.rs"
+
+[[test]]
+name = "wasm_module"
+path = "tests/wasm_module.rs"
+
+[[test]]
+name = "plugin_host"
+path = "tests/plugin_host.rs"
+
+[[example]]
+name = "preview_png"
+path = "examples/preview_png.rs"
+
+[dependencies]
+worldforge-core = { path = "crates/worldforge-core" }
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+authors = ["JC Kirsten"]
+
+[workspace.dependencies]
+worldforge-core = { path = "crates/worldforge-core", version = "0.1.0" }
+worldforge-photocraft = { path = "crates/worldforge-photocraft", version = "0.1.0" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[profile.release]
+# Smaller wasm and faster output; the plug-in runs in an interpreter, so code
+# size matters more than compile time.
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[dev-dependencies]
+wasmi = "0.46.0"
+serde_json.workspace = true

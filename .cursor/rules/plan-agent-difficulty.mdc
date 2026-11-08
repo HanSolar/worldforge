@@ -1,0 +1,45 @@
+---
+description: Every plan must include Agent usage (difficulty) at the top with Easy/Medium/Hard model routing.
+alwaysApply: true
+---
+
+# Agent usage (difficulty) — required on every plan
+
+**HARD RULE.** Every plan document (Cursor plan or planning markdown in this repo) MUST include an **Agent usage (difficulty)** section.
+
+## Placement
+
+Put it **at the top**: immediately after the plan header metadata block, **before** Constraints, Requirements, Milestones, or body. Do not bury it. Do not ship a plan without this section.
+
+## Plan heading order (hard)
+
+After **Agent usage (difficulty)**, every plan MUST include **in this order**:
+
+1. **Constraints** (if none, write `None.`)
+2. **Requirements**
+3. **Milestones this plan achieves**
+
+Then the plan body. The Agent usage section MUST keep a **full** table mapping **each** todo / work chunk — never omit the table or collapse it to one vague row.
+
+## Required content
+
+1. Short reminder that Easy work uses only cheap models: `composer-2.5-fast`, `gpt-5-mini`, `gemini-3.8-flash-high`, `claude-4.5-haiku-thinking`.
+2. Forbidden for Easy: Opus, `*-high-thinking`, Max Mode, Hard-tier slugs, and `inherit` from an expensive parent.
+3. A table that maps **each todo / work chunk** to **Easy / Medium / Hard** and names the model (or family).
+4. Escalate to Hard only when Medium already failed or the work is genuinely hard (wasm host traps, instruction-budget math, macro geography redesign).
+
+## Example shape
+
+```markdown
+## Agent usage (difficulty)
+
+Easy work uses a cheap model only. Do **not** use Opus, `*-high-thinking`, Max, or `inherit` for Easy.
+
+| Todo / work | Tier | Model |
+|-------------|------|--------|
+| `docs-install` — … | Easy | `composer-2.5-fast` or `gpt-5-mini` |
+| `landmass-macro` — … | Medium | `cursor-grok-4.6-medium` |
+| Instruction-budget failure after Medium | Hard | stronger model once |
+```
+
+Also in `AGENTS.md` § Agent model choice and `.cursor/rules/agent-model-cost.mdc`.
