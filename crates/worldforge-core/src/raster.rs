@@ -253,7 +253,7 @@ fn shade(field: &Field, palette: &Palette, u: f32, v: f32, options: &RenderOptio
     let height = field.sample(su, sv);
     let threshold = field.threshold();
 
-    let coast_effects = options.coast_glow && !options.preview_thumbnail_256;
+    let coast_effects = options.coast_glow;
     match surface {
         Surface::Ocean => {
             // Shallow-to-deep gradient away from the shelf. The exponent keeps
@@ -262,14 +262,21 @@ fn shade(field: &Field, palette: &Palette, u: f32, v: f32, options: &RenderOptio
             let t = (depth * 2.2).clamp(0.0, 1.0).powf(0.75);
             let mut colour = palette.ocean_highlight.lerp(palette.deep_ocean, t);
 
-            // Glow only matters near shore. Skipping deep ocean avoids the
-            // costly ring search on most pixels.
-            // Tight gate: shoreline glow is the costliest per-pixel branch and
-            // must stay inside PhotoCraft instruction budgets on large bands.
-            if coast_effects && depth < 0.16 {
-                if let Some(d) = coastline::shore_distance(field, su, sv, 2) {
-                    let falloff = (1.0 - d / 6.0).clamp(0.0, 1.0).powf(2.0);
-                    colour = colour.lerp(palette.coast_glow, falloff * 0.55);
+            if coast_effects {
+                if options.preview_thumbnail_256 {
+                    // Draft mode keeps a cheap shoreline tint but skips
+                    // neighborhood searches to stay inside host budgets.
+                    if depth < 0.18 {
+                        let falloff = (1.0 - depth / 0.18).clamp(0.0, 1.0).powf(1.7);
+                        colour = colour.lerp(palette.coast_glow, falloff * 0.35);
+                    }
+                } else if depth < 0.16 {
+                    // Full mode: glow only matters near shore. Skipping deep
+                    // ocean avoids the costly ring search on most pixels.
+                    if let Some(d) = coastline::shore_distance(field, su, sv, 2) {
+                        let falloff = (1.0 - d / 6.0).clamp(0.0, 1.0).powf(2.0);
+                        colour = colour.lerp(palette.coast_glow, falloff * 0.55);
+                    }
                 }
             }
             colour
@@ -283,7 +290,12 @@ fn shade(field: &Field, palette: &Palette, u: f32, v: f32, options: &RenderOptio
                 .lerp(palette.land_highlight, above.powf(0.85));
 
             // Coast checks are expensive; deep interior land cannot be coast.
-            if coast_effects && above < 0.20 && coastline::is_coast(field, su, sv) {
+            let coast_cutoff = if options.preview_thumbnail_256 {
+                0.28
+            } else {
+                0.20
+            };
+            if coast_effects && above < coast_cutoff && coastline::is_coast(field, su, sv) {
                 colour = palette.coastline;
             }
             colour
@@ -462,5 +474,27 @@ mod tests {
 
         assert!(warm > 500, "expected land pixels, got {warm}");
         assert!(cool > 500, "expected ocean pixels, got {cool}");
+    }
+
+    #[test]
+    fn coast_glow_still_changes_preview_mode_output() {
+        let field = Field::new(WorldConfig::default());
+        let on = RenderOptions {
+            canvas_width: 128,
+            canvas_height: 128,
+            coast_glow: true,
+            pixel_scale: 2,
+            preview_thumbnail_256: true,
+        };
+        let off = RenderOptions {
+            coast_glow: false,
+            ..on
+        };
+        let band = Band::new(0, 0, 128, 128, 3);
+        let mut a = vec![0.0f32; band.sample_count()];
+        let mut b = vec![0.0f32; band.sample_count()];
+        render_band(&field, &band, &on, &mut a);
+        render_band(&field, &band, &off, &mut b);
+        assert_ne!(a, b, "coast glow should affect preview-thumbnail mode");
     }
 }
