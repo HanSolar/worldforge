@@ -34,7 +34,7 @@ Future VectorCraft ───────┘
 | `crates/worldforge-cli` | Headless preview / manifest dump (not required for M1 ship) |
 | `examples/` | Preview harnesses |
 | `tests/` | Integration + wasm host simulation |
-| `docs/` | Architecture and install notes |
+| `docs/` | Architecture, install notes, inspiration resources |
 
 ## PhotoCraft ABI constraints (hard)
 
@@ -79,8 +79,10 @@ Use free / permissive sources as **shape** references, then write our own code. 
 
 Useful references (read licenses first):
 
+- Curated inspiration list: [`docs/inspiration/resource.md`](docs/inspiration/resource.md) (Mapgen4, GitHub worldgens, Natural Earth, style refs)
 - PhotoCraft plug-ins: https://github.com/storytold/photocraft
 - VectorCraft plug-ins: https://github.com/storytold/vectorcraft
+- Red Blob Games Mapgen4: https://www.redblobgames.com/maps/mapgen4/
 - Red Blob Games mapgen notes: https://www.redblobgames.com
 - noise-rs (ideas only unless license checked): https://github.com/Razaekel/noise-rs
 
