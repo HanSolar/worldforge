@@ -1,0 +1,62 @@
+---
+description: On new branches, if ≥7 days since last check, re-read ArtCraft/PhotoCraft plugin docs and update the WASM capability monitor tables.
+alwaysApply: true
+---
+
+# WASM Plugin Capability Monitor (hard)
+
+Whenever this agent **creates a new git branch** for WorldForge plan or feature work, also run the weekly host-capability check below.
+
+**Authoritative tracker:** [`docs/development/wasm_plugin_capability_monitor.md`](docs/development/wasm_plugin_capability_monitor.md)  
+(Stamp redirect: `docs/photocraft/abi_capability_check.md`)
+
+## When
+
+Trigger on any of:
+
+1. `git checkout -b …` / `git switch -c …` (new branch)
+2. Plan **Branch first** step (new plan/feature tip)
+3. Human asks to start a new plan or feature branch
+
+Skip only when the human explicitly says to skip the host check for this branch.
+
+## Cadence
+
+1. Read **Last checked:** in the monitor markdown.
+2. If **fewer than 7 days** have passed → note “ABI check current” and continue (unless the human asks for a refresh).
+3. If **7+ days**, missing stamp, or unreadable file → run a fresh check **in the same turn** as the branch create (before heavy implementation).
+
+## What to check
+
+Follow the **Official sources** and **Weekly inspection procedure** sections in the monitor file. At minimum:
+
+| Host | Doc |
+|------|-----|
+| PhotoCraft | https://raw.githubusercontent.com/storytold/photocraft/main/docs/plugins.md |
+| VectorCraft | https://raw.githubusercontent.com/storytold/vectorcraft/main/docs/plugins.md |
+| EffectCraft (separate ABI — do not mix) | https://raw.githubusercontent.com/storytold/effectcraft/main/docs/plugins.md |
+
+Also skim PhotoCraft #662 (v2 design), #12458 (WorldForge requests), and recent plugin-related PRs when time allows.
+
+## Record findings in tables
+
+Update the monitor markdown in the **same turn**:
+
+1. Bump **Last checked** (ISO date + timezone).
+2. Add/update rows in the **Capability table** (`Released` / `In development` / `Proposed` / `Requested` / `Deprecated`).
+3. Add a **Weekly review log** entry (and breaking-change row if needed).
+4. Call out **WorldForge opportunity** for any new **Released** feature.
+
+## Hard limits
+
+1. **Never implement Proposed** features in `worldforge-photocraft`.
+2. **Never invent** host imports, panels, or ABI exports absent from Released upstream docs.
+3. **Never assume** EffectCraft or VectorCraft APIs work inside PhotoCraft.
+4. If something useful is **Released**, tell the human and note a follow-up todo/plan — do not silently rewrite the adapter mid-unrelated feature unless ordered.
+
+## Companions
+
+- `AGENTS.md` § PhotoCraft ABI constraints + weekly check
+- `.cursor/rules/planning-governance.mdc`
+- `.cursor/rules/worldforge-architecture.mdc`
+- Inspiration chat that defined this monitor: https://chatgpt.com/share/6af6bd3e-0f70-83ea-ad64-c4f4d781ff8c

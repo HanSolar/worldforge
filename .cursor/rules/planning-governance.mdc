@@ -23,6 +23,7 @@ Do not implement unresolved critical constraints. Do not treat finishing core as
 ## When creating or updating a plan
 
 0. **Branch first (hard)** — create a dedicated plan/feature branch and name it at the top of the plan before implementation edits. Do not land plan work directly on `main` unless the human explicitly orders that.
+0a. **WASM capability weekly check** — on each new branch, if ≥7 days since `docs/development/wasm_plugin_capability_monitor.md` `Last checked:`, re-read ArtCraft/PhotoCraft (and related) plugin docs and update the capability tables (see `.cursor/rules/photocraft-abi-weekly-check.mdc`).
 0b. **Pre-design tip check** — `git fetch origin` when a remote exists; compare checkout vs `origin/main`; **stop** if a newer same-topic tip already has the work.
 1. **Existing-state inspection** — read owning crates; mark Verified vs Assumption.
 2. **Dependencies / interfaces** — core vs photocraft vs CLI; never reverse the dependency direction.

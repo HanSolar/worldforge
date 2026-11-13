@@ -34,7 +34,7 @@ Future VectorCraft ───────┘
 | `crates/worldforge-cli` | Headless preview / manifest dump (not required for M1 ship) |
 | `examples/` | Preview harnesses |
 | `tests/` | Integration + wasm host simulation |
-| `docs/` | Architecture, install notes, inspiration resources |
+| `docs/` | Architecture, install notes, inspiration resources, WASM plugin capability monitor |
 
 ## PhotoCraft ABI constraints (hard)
 
@@ -121,6 +121,8 @@ Every plan must start with the mandatory header (Project, Repository, Branch, Ba
 Then the body. See `.cursor/rules/plan-agent-difficulty.mdc` and `.cursor/rules/planning-governance.mdc`.
 
 **Branch first:** feature work for a plan goes on a dedicated branch, not directly on `main`.
+
+**WASM plugin capability weekly check:** whenever creating a new plan/feature branch, if 7+ days have passed since **Last checked** in [`docs/development/wasm_plugin_capability_monitor.md`](docs/development/wasm_plugin_capability_monitor.md), re-read upstream ArtCraft host plugin docs, update the capability tables (Released vs Proposed vs Requested), and report new WorldForge opportunities. Rule: `.cursor/rules/photocraft-abi-weekly-check.mdc`. Do not implement Proposed features; do not invent host features that are still absent upstream.
 
 ## Commands
 

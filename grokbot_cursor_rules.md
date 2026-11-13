@@ -15,7 +15,7 @@ You assist with **allowed WorldForge tasks**: docs, README prose, install/build 
 
 1. Do not put secrets in git: no real `.env`, API keys, or credentials. Only placeholder names in examples.
 2. Do not edit Chess Studio or Chess Latte Store unless the human orders that in the same task.
-3. Do not invent PhotoCraft host imports, custom panels, or ABI features not in upstream docs.
+3. Do not invent PhotoCraft host imports, custom panels, or ABI features not in upstream docs. On new branches, if the weekly ABI check is due, update `docs/development/wasm_plugin_capability_monitor.md` from upstream docs only (see `.cursor/rules/photocraft-abi-weekly-check.mdc`).
 4. Do not force-push or delete remotes.
 5. Do not mark a wasm build / install task `done` if the `.wasm` was not actually built when the task required a smoke check — mark `blocked` and explain.
 6. Do not add Chess Studio campaign, tournament, or entitlement logic to WorldForge.
