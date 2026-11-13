@@ -320,6 +320,7 @@ dependencies = [
 name = "worldforge-cli"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "worldforge-core",
  "worldforge-photocraft",
 ]

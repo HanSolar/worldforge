@@ -10,7 +10,7 @@
 //! and separate config knobs so changing the seed (or continent controls) can
 //! move large landmasses without islands dragging continents around.
 
-use crate::config::WorldConfig;
+use crate::config::{GeneratorType, WorldConfig};
 use crate::noise::{fbm, fbm_signed, value_noise};
 use crate::seed::SplitMix64;
 
@@ -112,6 +112,7 @@ pub struct Field {
     seed_island: u32,
     seed_island_warp: u32,
     seed_coast: u32,
+    seed_mountain: u32,
     transform: ContinentTransform,
     threshold: f32,
 }
@@ -134,6 +135,7 @@ impl Field {
             seed_island: seed.stream("island"),
             seed_island_warp: seed.stream("island_warp"),
             seed_coast: seed.stream("coast"),
+            seed_mountain: seed.stream("mountain"),
             transform,
             threshold: config.land_threshold(),
         }
@@ -206,6 +208,19 @@ impl Field {
                 let cluster = fbm(self.seed_island, iu * 4.5 + 3.0, iv * 4.5);
                 let gate = open * (0.35 + cluster * 0.65);
                 height += ridge * gate * islands * (0.28 + island_var * 0.22);
+            }
+        }
+
+        // --- Procedural World Feature 1: mountain density --------------------
+        // Cheap ridge overlay, gated so random_world output is unchanged.
+        if self.config.generator_type == GeneratorType::ProceduralWorld {
+            let mountains = self.config.mountain_weight();
+            if mountains > 0.0 {
+                let ridge = fbm(self.seed_mountain, su * 5.5 + 1.7, sv * 5.5 - 2.3);
+                let peak = ((ridge - 0.55) / 0.45).clamp(0.0, 1.0).powf(1.4);
+                // Only lift land-ish heights so ocean stays ocean.
+                let land_gate = ((height - self.threshold * 0.85) / 0.25).clamp(0.0, 1.0);
+                height += peak * land_gate * mountains * 0.28;
             }
         }
 
@@ -342,6 +357,53 @@ mod tests {
         assert!(
             continent_delta > island_delta * 1.15,
             "continent knobs should reshape more than island knobs: {continent_delta} vs {island_delta}"
+        );
+    }
+
+    #[test]
+    fn mountain_density_changes_procedural_world_only() {
+        let base = WorldConfig {
+            seed: 21,
+            mountain_density: 0,
+            generator_type: GeneratorType::ProceduralWorld,
+            ..WorldConfig::default()
+        };
+        let high = WorldConfig {
+            mountain_density: 100,
+            ..base
+        };
+        let random_low = WorldConfig {
+            generator_type: GeneratorType::RandomWorld,
+            mountain_density: 0,
+            ..base
+        };
+        let random_high = WorldConfig {
+            generator_type: GeneratorType::RandomWorld,
+            mountain_density: 100,
+            ..base
+        };
+
+        let score = |a: WorldConfig, b: WorldConfig| -> f32 {
+            let fa = Field::new(a);
+            let fb = Field::new(b);
+            let mut sum = 0.0;
+            for y in 0..40 {
+                for x in 0..40 {
+                    let u = (x as f32 + 0.5) / 40.0;
+                    let v = (y as f32 + 0.5) / 40.0;
+                    sum += (fa.sample(u, v) - fb.sample(u, v)).abs();
+                }
+            }
+            sum
+        };
+
+        assert!(
+            score(base, high) > 1.0,
+            "procedural_world mountain_density should reshape height"
+        );
+        assert!(
+            score(random_low, random_high) < 1e-4,
+            "random_world must ignore mountain_density"
         );
     }
 

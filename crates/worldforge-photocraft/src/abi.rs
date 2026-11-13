@@ -226,7 +226,7 @@ pub unsafe extern "C" fn pc_filter(
         canvas_height: geometry.canvas_height,
         coast_glow: config.coast_glow,
         pixel_scale: config.pixel_scale,
-        preview_thumbnail_256: config.preview_thumbnail_256,
+        preview_thumbnail_256: config.preview_thumbnail_256 && !config.generate_high_res,
     };
 
     // Work in global document coordinates: the band's origin comes from

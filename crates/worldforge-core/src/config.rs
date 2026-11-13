@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::seed::Seed;
+use crate::seed::{Seed, SplitMix64};
 
 /// Inclusive parameter bounds.
 ///
@@ -50,6 +50,11 @@ pub const COAST_ROUGHNESS: Bounds = Bounds {
     max: 100,
     default: 45,
 };
+pub const MOUNTAIN_DENSITY: Bounds = Bounds {
+    min: 0,
+    max: 100,
+    default: 55,
+};
 pub const LAND_COVERAGE: Bounds = Bounds {
     min: 5,
     max: 90,
@@ -90,16 +95,25 @@ pub struct WorldConfig {
     pub island_density: i32,
     /// Coastline irregularity, 0..=100.
     pub coast_roughness: i32,
+    /// Mountain coverage/intensity for procedural world mode, 0..=100.
+    pub mountain_density: i32,
     /// Approximate land share, in percent.
     pub land_coverage: i32,
     /// Pixel-art sampling scale, in document pixels per world texel.
     pub pixel_scale: i32,
     /// Draft mode: clamp effective sampling to ~256px across for fast preview.
     pub preview_thumbnail_256: bool,
+    /// Forces full-resolution rendering even when preview mode is default-on.
+    pub generate_high_res: bool,
+    /// Internal/CLI flag only — not a PhotoCraft dialog control.
+    /// A bool checkbox cannot act as a Randomize button.
+    pub randomize_settings: bool,
     /// Bright coastline treatment.
     pub coast_glow: bool,
     /// Palette id.
     pub palette: PaletteId,
+    /// Generation style family.
+    pub generator_type: GeneratorType,
 }
 
 impl Default for WorldConfig {
@@ -111,11 +125,15 @@ impl Default for WorldConfig {
             island_variation: ISLAND_VARIATION.default,
             island_density: ISLAND_DENSITY.default,
             coast_roughness: COAST_ROUGHNESS.default,
+            mountain_density: MOUNTAIN_DENSITY.default,
             land_coverage: LAND_COVERAGE.default,
             pixel_scale: PIXEL_SCALE.default,
-            preview_thumbnail_256: false,
+            preview_thumbnail_256: true,
+            generate_high_res: false,
+            randomize_settings: false,
             coast_glow: true,
             palette: PaletteId::ArcadeBlueGold,
+            generator_type: GeneratorType::RandomWorld,
         }
     }
 }
@@ -145,6 +163,7 @@ impl WorldConfig {
         self.island_variation = clamp_bounds(self.island_variation, ISLAND_VARIATION);
         self.island_density = clamp_bounds(self.island_density, ISLAND_DENSITY);
         self.coast_roughness = clamp_bounds(self.coast_roughness, COAST_ROUGHNESS);
+        self.mountain_density = clamp_bounds(self.mountain_density, MOUNTAIN_DENSITY);
         self.land_coverage = clamp_bounds(self.land_coverage, LAND_COVERAGE);
         self.pixel_scale = clamp_bounds(self.pixel_scale, PIXEL_SCALE);
         self
@@ -161,6 +180,7 @@ impl WorldConfig {
         check(self.island_variation, ISLAND_VARIATION, "island_variation")?;
         check(self.island_density, ISLAND_DENSITY, "island_density")?;
         check(self.coast_roughness, COAST_ROUGHNESS, "coast_roughness")?;
+        check(self.mountain_density, MOUNTAIN_DENSITY, "mountain_density")?;
         check(self.land_coverage, LAND_COVERAGE, "land_coverage")?;
         check(self.pixel_scale, PIXEL_SCALE, "pixel_scale")?;
         Ok(())
@@ -196,6 +216,32 @@ impl WorldConfig {
     pub fn island_weight(&self) -> f32 {
         self.island_density as f32 / 100.0
     }
+
+    /// Mountain density as a `0.0..=1.0` weight (Procedural World Feature 1).
+    pub fn mountain_weight(&self) -> f32 {
+        self.mountain_density as f32 / 100.0
+    }
+
+    /// Returns a config randomized from the current seed.
+    ///
+    /// The same input seed produces the same randomized settings, which keeps
+    /// banded wasm runs deterministic while still offering a one-click shuffle.
+    pub fn randomized(mut self) -> Self {
+        let mut rng = self.seed().rng("settings-randomizer");
+        self.seed = bounded_u64(&mut rng, SEED);
+        self.continent_variation = bounded_i32(&mut rng, CONTINENT_VARIATION);
+        self.continent_drift = bounded_i32(&mut rng, CONTINENT_DRIFT);
+        self.island_variation = bounded_i32(&mut rng, ISLAND_VARIATION);
+        self.island_density = bounded_i32(&mut rng, ISLAND_DENSITY);
+        self.coast_roughness = bounded_i32(&mut rng, COAST_ROUGHNESS);
+        self.mountain_density = bounded_i32(&mut rng, MOUNTAIN_DENSITY);
+        self.land_coverage = bounded_i32(&mut rng, LAND_COVERAGE);
+        self.pixel_scale = bounded_i32(&mut rng, PIXEL_SCALE);
+        self.coast_glow = (rng.next_u32() & 1) == 0;
+        // Keep palette and generator_type as chosen by the user; only shuffle
+        // numeric/bool map knobs so style and algorithm stay under control.
+        self
+    }
 }
 
 fn clamp_bounds(value: i32, bounds: Bounds) -> i32 {
@@ -214,6 +260,16 @@ fn check(value: i32, bounds: Bounds, field: &'static str) -> Result<(), ConfigEr
     Ok(())
 }
 
+fn bounded_i32(rng: &mut SplitMix64, bounds: Bounds) -> i32 {
+    let span = (bounds.max - bounds.min + 1) as u32;
+    bounds.min + (rng.next_u32() % span) as i32
+}
+
+fn bounded_u64(rng: &mut SplitMix64, bounds: Bounds) -> u64 {
+    let max = bounds.max as u64;
+    rng.next_u64() % (max + 1)
+}
+
 /// Why a [`WorldConfig`] was rejected.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ConfigError {
@@ -227,15 +283,49 @@ pub enum ConfigError {
 
     #[error("unknown palette `{0}`")]
     UnknownPalette(String),
+
+    #[error("unknown generator_type `{0}`")]
+    UnknownGeneratorType(String),
 }
 
-/// Palette ids the generator understands.
+/// Palette ids — color style only, reusable by every generator type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PaletteId {
-    /// Navy ocean, gold land, cyan coast — the M1 look.
+    /// Navy ocean, gold land, cyan coast — blue/gold arcade color style.
     #[default]
     ArcadeBlueGold,
+}
+
+/// Top-level generator family. Independent from [`PaletteId`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GeneratorType {
+    /// Current random world generator (renamed from earth_arcade).
+    #[default]
+    RandomWorld,
+    /// Procedural world tuning path (Feature 1+: mountains, later biomes).
+    ProceduralWorld,
+}
+
+impl GeneratorType {
+    pub const ALL: [GeneratorType; 2] =
+        [GeneratorType::RandomWorld, GeneratorType::ProceduralWorld];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            GeneratorType::RandomWorld => "random_world",
+            GeneratorType::ProceduralWorld => "procedural_world",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        // Accept legacy earth_arcade as random_world so older params keep working.
+        if value == "earth_arcade" {
+            return Some(GeneratorType::RandomWorld);
+        }
+        GeneratorType::ALL.into_iter().find(|k| k.as_str() == value)
+    }
 }
 
 impl PaletteId {
@@ -292,6 +382,7 @@ mod tests {
             c.continent_drift = 9_999;
             c.island_variation = -1;
             c.island_density = 9_999;
+            c.mountain_density = 9_999;
             c.pixel_scale = 0;
         });
         let fixed = config.clamped();
@@ -300,6 +391,7 @@ mod tests {
         assert_eq!(fixed.continent_drift, CONTINENT_DRIFT.max);
         assert_eq!(fixed.island_variation, ISLAND_VARIATION.min);
         assert_eq!(fixed.island_density, ISLAND_DENSITY.max);
+        assert_eq!(fixed.mountain_density, MOUNTAIN_DENSITY.max);
         assert_eq!(fixed.pixel_scale, PIXEL_SCALE.min);
     }
 
@@ -324,5 +416,29 @@ mod tests {
             assert_eq!(PaletteId::parse(palette.as_str()).unwrap(), palette);
         }
         assert!(PaletteId::parse("nope").is_err());
+    }
+
+    #[test]
+    fn generator_type_round_trips() {
+        for kind in GeneratorType::ALL {
+            assert_eq!(GeneratorType::parse(kind.as_str()), Some(kind));
+        }
+        assert_eq!(GeneratorType::parse("invalid"), None);
+    }
+
+    #[test]
+    fn randomization_is_seed_deterministic_and_in_range() {
+        let a = WorldConfig {
+            seed: 42,
+            ..WorldConfig::default()
+        }
+        .randomized();
+        let b = WorldConfig {
+            seed: 42,
+            ..WorldConfig::default()
+        }
+        .randomized();
+        assert_eq!(a, b);
+        assert!(a.validate().is_ok());
     }
 }

@@ -4,8 +4,8 @@
 //! would — a host that knows only about configs, bands and coordinates.
 
 use worldforge_core::{
-    Band, Field, RenderOptions, WorldConfig, config_from_params, land_fraction, render_band,
-    render_image,
+    Band, Field, GeneratorType, RenderOptions, WorldConfig, config_from_params, land_fraction,
+    render_band, render_image,
 };
 
 fn options(canvas: u32) -> RenderOptions {
@@ -14,7 +14,7 @@ fn options(canvas: u32) -> RenderOptions {
         canvas_height: canvas,
         coast_glow: true,
         pixel_scale: 2,
-        preview_thumbnail_256: false,
+        preview_thumbnail_256: true,
     }
 }
 
@@ -213,6 +213,48 @@ fn island_density_changes_the_map() {
         ..WorldConfig::default()
     };
     assert_ne!(render_image(none, 64, 64, 3), render_image(many, 64, 64, 3));
+}
+
+#[test]
+fn procedural_world_mountain_density_changes_pixels() {
+    let low = WorldConfig {
+        seed: 33,
+        generator_type: GeneratorType::ProceduralWorld,
+        mountain_density: 0,
+        preview_thumbnail_256: false,
+        generate_high_res: true,
+        ..WorldConfig::default()
+    };
+    let high = WorldConfig {
+        mountain_density: 100,
+        ..low
+    };
+    assert_ne!(
+        render_image(low, 64, 64, 3),
+        render_image(high, 64, 64, 3),
+        "mountain_density should change procedural_world pixels"
+    );
+}
+
+#[test]
+fn random_world_ignores_mountain_density() {
+    let low = WorldConfig {
+        seed: 33,
+        generator_type: GeneratorType::RandomWorld,
+        mountain_density: 0,
+        preview_thumbnail_256: false,
+        generate_high_res: true,
+        ..WorldConfig::default()
+    };
+    let high = WorldConfig {
+        mountain_density: 100,
+        ..low
+    };
+    assert_eq!(
+        render_image(low, 64, 64, 3),
+        render_image(high, 64, 64, 3),
+        "random_world must ignore mountain_density"
+    );
 }
 
 #[test]

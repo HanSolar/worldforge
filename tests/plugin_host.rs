@@ -225,7 +225,7 @@ fn manifest_is_readable_through_the_abi() {
     let manifest = plugin.manifest();
 
     let parsed: serde_json::Value = serde_json::from_str(&manifest).expect("manifest JSON");
-    assert_eq!(parsed["id"], "org.worldforge.earth-arcade");
+    assert_eq!(parsed["id"], "org.worldforge.worldforge");
     assert_eq!(parsed["kind"], "filter");
     assert_eq!(parsed["area"], "canvas");
 }

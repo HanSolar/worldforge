@@ -9,9 +9,11 @@
 //! worldforge --seed 42 --continent-drift 90 --png out/world.png
 //! ```
 
-use std::process::ExitCode;
+use std::{fs, process::ExitCode};
 
-use worldforge_core::{WorldConfig, land_fraction, render_image};
+use worldforge_core::{
+    GeneratorType, WorldConfig, config_from_params, land_fraction, render_image,
+};
 
 mod png_writer;
 
@@ -42,6 +44,12 @@ fn run(args: Vec<String>) -> Result<(), String> {
     let config = options.to_config()?;
     let size = options.size.unwrap_or(512);
 
+    if let Some(path) = &options.save_settings {
+        fs::write(path, config_json(config))
+            .map_err(|e| format!("failed to write settings `{path}`: {e}"))?;
+        println!("saved settings to {path}");
+    }
+
     let land = land_fraction(config, 128);
     println!(
         "seed {} → {}x{} canvas, land {:.1}%, palette {}",
@@ -62,22 +70,28 @@ fn run(args: Vec<String>) -> Result<(), String> {
 }
 
 const USAGE: &str = "\
-worldforge — deterministic Earth-like arcade map generator
+worldforge — deterministic world map generators
 
 USAGE:
     worldforge [OPTIONS]
 
 OPTIONS:
         --seed <N>                 Reproduce a map (default 123456)
+        --generator <NAME>         random_world | procedural_world
+        --palette <NAME>           Color style (default arcade_blue_gold)
         --continent-variation <N>  0..100, continent silhouette reshape
         --continent-drift <N>      0..100, how far continents move from anchors
         --island-variation <N>     0..100, island shape/placement randomness
         --islands <N>              0..100, small-island frequency
         --variation <N>            Legacy: maps into continent + island knobs
         --roughness <N>            0..100, coastline irregularity
+        --mountains <N>            0..100, procedural_world mountain density
         --coverage <N>             5..90, approximate land share in percent
         --scale <N>                1..8, pixel-art block size
-        --preview-256              Draft mode: cap effective sampling near 256px
+        --full-res                 Generate full-resolution output (preview-256 is default)
+        --randomize                Action: randomize seed + all numeric/bool map fields
+        --load-settings <PATH>     Load map settings JSON
+        --save-settings <PATH>     Save final map settings JSON
         --no-glow                  Disable the bright coastline treatment
         --size <N>                 Preview size in pixels (default 512)
         --png <PATH>               Write a PNG preview
@@ -87,15 +101,21 @@ OPTIONS:
 #[derive(Debug, Default)]
 struct Options {
     seed: Option<u64>,
+    generator: Option<String>,
+    palette: Option<String>,
     continent_variation: Option<i32>,
     continent_drift: Option<i32>,
     island_variation: Option<i32>,
     variation: Option<i32>,
     roughness: Option<i32>,
+    mountains: Option<i32>,
     islands: Option<i32>,
     coverage: Option<i32>,
     scale: Option<i32>,
-    preview_256: bool,
+    full_res: bool,
+    randomize: bool,
+    load_settings: Option<String>,
+    save_settings: Option<String>,
     no_glow: bool,
     size: Option<u32>,
     png: Option<String>,
@@ -112,9 +132,14 @@ impl Options {
             match arg.as_str() {
                 "-h" | "--help" => options.help = true,
                 "--manifest" => options.manifest = true,
-                "--preview-256" => options.preview_256 = true,
+                "--full-res" => options.full_res = true,
+                "--randomize" => options.randomize = true,
+                "--load-settings" => options.load_settings = Some(value(&mut args, arg)?),
+                "--save-settings" => options.save_settings = Some(value(&mut args, arg)?),
                 "--no-glow" => options.no_glow = true,
                 "--seed" => options.seed = Some(value(&mut args, arg)?.parse().map_err(bad(arg))?),
+                "--generator" => options.generator = Some(value(&mut args, arg)?),
+                "--palette" => options.palette = Some(value(&mut args, arg)?),
                 "--continent-variation" => {
                     options.continent_variation =
                         Some(value(&mut args, arg)?.parse().map_err(bad(arg))?)
@@ -132,6 +157,9 @@ impl Options {
                 }
                 "--roughness" => {
                     options.roughness = Some(value(&mut args, arg)?.parse().map_err(bad(arg))?)
+                }
+                "--mountains" => {
+                    options.mountains = Some(value(&mut args, arg)?.parse().map_err(bad(arg))?)
                 }
                 "--islands" => {
                     options.islands = Some(value(&mut args, arg)?.parse().map_err(bad(arg))?)
@@ -152,10 +180,24 @@ impl Options {
     }
 
     fn to_config(&self) -> Result<WorldConfig, String> {
-        let mut config = WorldConfig::default();
+        let mut config = if let Some(path) = &self.load_settings {
+            let text = fs::read_to_string(path)
+                .map_err(|e| format!("failed to read settings `{path}`: {e}"))?;
+            config_from_params(&text).map_err(|e| format!("invalid settings `{path}`: {e}"))?
+        } else {
+            WorldConfig::default()
+        };
 
         if let Some(seed) = self.seed {
             config.seed = seed;
+        }
+        if let Some(kind) = &self.generator {
+            config.generator_type =
+                GeneratorType::parse(kind).ok_or_else(|| format!("unknown generator `{kind}`"))?;
+        }
+        if let Some(palette) = &self.palette {
+            config.palette = worldforge_core::PaletteId::parse(palette)
+                .map_err(|e| format!("invalid palette: {e}"))?;
         }
 
         let has_split = self.continent_variation.is_some()
@@ -179,6 +221,9 @@ impl Options {
         if let Some(v) = self.roughness {
             config.coast_roughness = v;
         }
+        if let Some(v) = self.mountains {
+            config.mountain_density = v;
+        }
         if let Some(v) = self.islands {
             config.island_density = v;
         }
@@ -188,8 +233,11 @@ impl Options {
         if let Some(v) = self.scale {
             config.pixel_scale = v;
         }
-        if self.preview_256 {
-            config.preview_thumbnail_256 = true;
+        config.generate_high_res = self.full_res;
+        config.randomize_settings = self.randomize;
+        if self.randomize {
+            config = config.randomized();
+            config.randomize_settings = true;
         }
         if self.no_glow {
             config.coast_glow = false;
@@ -197,6 +245,27 @@ impl Options {
 
         Ok(config.clamped())
     }
+}
+
+fn config_json(config: WorldConfig) -> String {
+    serde_json::json!({
+        "generator_type": config.generator_type.as_str(),
+        "palette": config.palette.as_str(),
+        "seed": config.seed,
+        "continent_variation": config.continent_variation,
+        "continent_drift": config.continent_drift,
+        "island_variation": config.island_variation,
+        "island_density": config.island_density,
+        "coast_roughness": config.coast_roughness,
+        "mountain_density": config.mountain_density,
+        "land_coverage": config.land_coverage,
+        "pixel_scale": config.pixel_scale,
+        "preview_thumbnail_256": config.preview_thumbnail_256,
+        "generate_high_res": config.generate_high_res,
+        "randomize_settings": config.randomize_settings,
+        "coast_glow": config.coast_glow
+    })
+    .to_string()
 }
 
 fn value(args: &mut impl Iterator<Item = impl AsRef<str>>, flag: &str) -> Result<String, String> {

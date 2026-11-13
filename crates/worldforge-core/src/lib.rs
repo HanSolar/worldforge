@@ -26,7 +26,7 @@ pub mod palette;
 pub mod raster;
 pub mod seed;
 
-pub use config::{ConfigError, PaletteId, WorldConfig};
+pub use config::{ConfigError, GeneratorType, PaletteId, WorldConfig};
 pub use landmass::Field;
 pub use palette::{Colour, Palette};
 pub use raster::{Band, RenderOptions, render_band};
@@ -67,6 +67,8 @@ pub fn config_from_params(json: &str) -> Result<WorldConfig> {
         #[serde(default)]
         coast_roughness: Option<i32>,
         #[serde(default)]
+        mountain_density: Option<i32>,
+        #[serde(default)]
         island_density: Option<i32>,
         #[serde(default)]
         land_coverage: Option<i32>,
@@ -75,9 +77,15 @@ pub fn config_from_params(json: &str) -> Result<WorldConfig> {
         #[serde(default)]
         preview_thumbnail_256: Option<bool>,
         #[serde(default)]
+        generate_high_res: Option<bool>,
+        #[serde(default)]
+        randomize_settings: Option<bool>,
+        #[serde(default)]
         coast_glow: Option<bool>,
         #[serde(default)]
         palette: Option<String>,
+        #[serde(default)]
+        generator_type: Option<String>,
     }
 
     let parsed: Params = serde_json::from_str(json)?;
@@ -109,6 +117,9 @@ pub fn config_from_params(json: &str) -> Result<WorldConfig> {
     if let Some(v) = parsed.coast_roughness {
         config.coast_roughness = v;
     }
+    if let Some(v) = parsed.mountain_density {
+        config.mountain_density = v;
+    }
     if let Some(v) = parsed.island_density {
         config.island_density = v;
     }
@@ -121,11 +132,31 @@ pub fn config_from_params(json: &str) -> Result<WorldConfig> {
     if let Some(v) = parsed.preview_thumbnail_256 {
         config.preview_thumbnail_256 = v;
     }
+    if let Some(v) = parsed.generate_high_res {
+        config.generate_high_res = v;
+    }
+    if let Some(v) = parsed.randomize_settings {
+        config.randomize_settings = v;
+    }
     if let Some(v) = parsed.coast_glow {
         config.coast_glow = v;
     }
     if let Some(palette) = parsed.palette.as_deref() {
         config.palette = PaletteId::parse(palette)?;
+    }
+    if let Some(kind) = parsed.generator_type.as_deref() {
+        if let Some(parsed) = GeneratorType::parse(kind) {
+            config.generator_type = parsed;
+        } else {
+            return Err(Error::Config(ConfigError::UnknownGeneratorType(
+                kind.to_string(),
+            )));
+        }
+    }
+
+    if config.randomize_settings {
+        config = config.randomized();
+        config.randomize_settings = true;
     }
 
     Ok(config.clamped())
@@ -140,7 +171,7 @@ pub fn render_image(config: WorldConfig, width: u32, height: u32, channels: u32)
         canvas_height: height,
         coast_glow: config.coast_glow,
         pixel_scale: config.pixel_scale,
-        preview_thumbnail_256: config.preview_thumbnail_256,
+        preview_thumbnail_256: config.preview_thumbnail_256 && !config.generate_high_res,
     };
 
     let mut buffer = vec![0.0f32; band.sample_count()];
@@ -196,5 +227,51 @@ mod tests {
         let on = config_from_params(r#"{"preview_thumbnail_256":true}"#).unwrap();
         assert!(!off.preview_thumbnail_256);
         assert!(on.preview_thumbnail_256);
+    }
+
+    #[test]
+    fn high_res_toggle_parses() {
+        let cfg = config_from_params(r#"{"generate_high_res":true}"#).unwrap();
+        assert!(cfg.generate_high_res);
+    }
+
+    #[test]
+    fn randomize_toggle_changes_from_plain_defaults() {
+        let plain = config_from_params(r#"{"seed":77}"#).unwrap();
+        let randomized = config_from_params(r#"{"seed":77,"randomize_settings":true}"#).unwrap();
+        assert!(randomized.randomize_settings);
+        assert_ne!(plain, randomized);
+    }
+
+    #[test]
+    fn procedural_world_type_and_mountain_density_parse() {
+        let cfg =
+            config_from_params(r#"{"generator_type":"procedural_world","mountain_density":88}"#)
+                .unwrap();
+        assert_eq!(cfg.generator_type, GeneratorType::ProceduralWorld);
+        assert_eq!(cfg.mountain_density, 88);
+    }
+
+    #[test]
+    fn default_generator_is_random_world() {
+        let cfg = config_from_params(r#"{}"#).unwrap();
+        assert_eq!(cfg.generator_type, GeneratorType::RandomWorld);
+        assert_eq!(cfg.palette, PaletteId::ArcadeBlueGold);
+    }
+
+    #[test]
+    fn legacy_earth_arcade_maps_to_random_world() {
+        let cfg = config_from_params(r#"{"generator_type":"earth_arcade"}"#).unwrap();
+        assert_eq!(cfg.generator_type, GeneratorType::RandomWorld);
+    }
+
+    #[test]
+    fn palette_is_independent_of_generator_type() {
+        let cfg = config_from_params(
+            r#"{"generator_type":"procedural_world","palette":"arcade_blue_gold"}"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.generator_type, GeneratorType::ProceduralWorld);
+        assert_eq!(cfg.palette, PaletteId::ArcadeBlueGold);
     }
 }

@@ -289,6 +289,16 @@ fn shade(field: &Field, palette: &Palette, u: f32, v: f32, options: &RenderOptio
                 .land_base
                 .lerp(palette.land_highlight, above.powf(0.85));
 
+            // Procedural World Feature 1: stronger highland contrast via the
+            // selected palette (palette stays generator-independent).
+            if field.config().generator_type == crate::config::GeneratorType::ProceduralWorld {
+                let mountains = field.config().mountain_weight();
+                if mountains > 0.0 && above > 0.45 {
+                    let peak = ((above - 0.45) / 0.55).clamp(0.0, 1.0) * mountains;
+                    colour = colour.lerp(palette.land_highlight.scaled(1.15), peak * 0.55);
+                }
+            }
+
             // Coast checks are expensive; deep interior land cannot be coast.
             let coast_cutoff = if options.preview_thumbnail_256 {
                 0.28
